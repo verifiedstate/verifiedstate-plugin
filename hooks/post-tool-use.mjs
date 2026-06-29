@@ -17,7 +17,7 @@
 // - Read, Glob, Grep → skip (read-only, high volume, low signal)
 // - MCP calls → capture (cross-tool coordination)
 
-import { mcpCall, writeDedupMarker, writeLocalEvent, getConfig, parseInput } from "./hook-env.mjs";
+import { mcpCall, writeDedupMarker, writeLocalEvent, getConfig, parseInput, scrubSecrets } from "./hook-env.mjs";
 import { createHash } from "crypto";
 
 const CAPTURE_TOOLS = new Set([
@@ -77,11 +77,13 @@ async function main() {
 
   writeDedupMarker(dedupKey);
 
-  const summary = summarizeInput(toolName, toolInput);
+  const summary = scrubSecrets(summarizeInput(toolName, toolInput));
   const filesChanged = extractFilesChanged(toolName, toolInput);
-  const resultPreview = typeof toolResult === "string"
-    ? toolResult.slice(0, 200)
-    : JSON.stringify(toolResult).slice(0, 200);
+  const resultPreview = scrubSecrets(
+    typeof toolResult === "string"
+      ? toolResult.slice(0, 200)
+      : JSON.stringify(toolResult).slice(0, 200)
+  );
 
   // ── Always write locally ──────────────────────────────────────────
   writeLocalEvent({
@@ -94,11 +96,11 @@ async function main() {
 
   // ── Cloud mode: also ingest to API ────────────────────────────────
   if (config.mode === "cloud") {
-    const content = [
+    const content = scrubSecrets([
       `[PostToolUse] ${toolName}: ${summary}`,
       filesChanged.length > 0 ? `Files: ${filesChanged.join(", ")}` : "",
       resultPreview ? `Result: ${resultPreview}` : "",
-    ].filter(Boolean).join("\n");
+    ].filter(Boolean).join("\n"));
 
     // Fire and forget — don't block the session
     mcpCall("memory_ingest", {

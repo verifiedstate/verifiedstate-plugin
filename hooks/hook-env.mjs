@@ -1,5 +1,5 @@
 // hooks/hook-env.mjs — shared runtime for VerifiedState plugin hooks
-import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, appendFileSync, existsSync, mkdirSync, chmodSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execSync } from "child_process";
@@ -12,6 +12,52 @@ const VSYNC_DIR = join(process.env.HOME || "", ".vsync");
 const CONFIG_PATH = join(VSYNC_DIR, "config.json");
 const DEDUP_PATH = join(VSYNC_DIR, "plugin-dedup.json");
 const TIMELINE_PATH = join(VSYNC_DIR, "timeline.jsonl");
+const MAX_STDIN_BYTES = 256 * 1024; // 256KB max input
+
+// ── Secret scrubbing ────────────────────────────────────────────────
+// Redact common secret patterns before writing to timeline or API.
+const SECRET_PATTERNS = [
+  /(?:sk|pk|rk|vs|vm)[-_](?:live|test|prod|anon|secret)[_-][\w]{16,}/gi,  // API keys
+  /ghp_[\w]{36,}/gi,                               // GitHub PATs
+  /gho_[\w]{36,}/gi,                               // GitHub OAuth
+  /github_pat_[\w]{20,}/gi,                         // GitHub fine-grained
+  /glpat-[\w-]{20,}/gi,                             // GitLab PATs
+  /AKIA[\w]{16}/g,                                  // AWS access keys
+  /eyJ[\w-]{20,}\.eyJ[\w-]{20,}\.[\w-]{20,}/g,     // JWTs
+  /Bearer\s+[\w.-]{20,}/gi,                         // Bearer tokens
+  /(?:password|passwd|pwd|secret|token|api_key|apikey|auth)\s*[:=]\s*['"]?[\w!@#$%^&*()-]{8,}/gi,
+  /-----BEGIN\s[\w\s]+KEY-----/g,                   // PEM headers
+  /(?:postgres|mysql|mongodb|redis):\/\/[^\s'"]+/gi, // Connection strings
+  /xox[bpras]-[\w-]{10,}/gi,                        // Slack tokens
+  /sk-[\w]{20,}/gi,                                 // OpenAI keys
+  /SG\.[\w-]{22,}/gi,                               // SendGrid keys
+];
+
+export function scrubSecrets(text) {
+  if (!text || typeof text !== "string") return text;
+  let scrubbed = text;
+  for (const pattern of SECRET_PATTERNS) {
+    scrubbed = scrubbed.replace(pattern, "[REDACTED]");
+  }
+  return scrubbed;
+}
+
+// ── Safe directory + file creation ──────────────────────────────────
+function ensureVsyncDir() {
+  if (!existsSync(VSYNC_DIR)) {
+    mkdirSync(VSYNC_DIR, { recursive: true, mode: 0o700 });
+  }
+}
+
+function safeWriteFile(filePath, data) {
+  ensureVsyncDir();
+  writeFileSync(filePath, data, { mode: 0o600 });
+}
+
+function safeAppendFile(filePath, data) {
+  ensureVsyncDir();
+  appendFileSync(filePath, data, { mode: 0o600 });
+}
 
 const MCP_ENDPOINT = "https://mcp.verifiedstate.ai/mcp";
 
@@ -42,13 +88,14 @@ export function getConfig() {
 // value even without signup. Users can upgrade to cloud sync later.
 export function writeLocalEvent(event) {
   try {
-    if (!existsSync(VSYNC_DIR)) mkdirSync(VSYNC_DIR, { recursive: true });
     const entry = {
       ...event,
+      // Scrub any secrets from summary or other string fields
+      summary: scrubSecrets(event.summary),
       ts: new Date().toISOString(),
       cwd: process.env.PWD || process.cwd(),
     };
-    appendFileSync(TIMELINE_PATH, JSON.stringify(entry) + "\n");
+    safeAppendFile(TIMELINE_PATH, JSON.stringify(entry) + "\n");
   } catch {
     // Non-fatal
   }
@@ -123,24 +170,27 @@ export async function mcpCall(method, args) {
 // the daemon checks before ingesting the same turn.
 export function writeDedupMarker(eventId) {
   try {
-    const dir = dirname(DEDUP_PATH);
-    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
     let markers = {};
     try {
       markers = JSON.parse(readFileSync(DEDUP_PATH, "utf-8"));
     } catch {}
 
-    // Keep only last 500 markers (rolling window)
+    // Keep only last 500 markers, expire entries older than 24h
+    const now = Date.now();
+    const DAY_MS = 86400000;
     const keys = Object.keys(markers);
-    if (keys.length > 500) {
-      for (const k of keys.slice(0, keys.length - 400)) {
+    for (const k of keys) {
+      if (now - markers[k] > DAY_MS) delete markers[k];
+    }
+    if (Object.keys(markers).length > 500) {
+      const sorted = Object.entries(markers).sort((a, b) => a[1] - b[1]);
+      for (const [k] of sorted.slice(0, sorted.length - 400)) {
         delete markers[k];
       }
     }
 
-    markers[eventId] = Date.now();
-    writeFileSync(DEDUP_PATH, JSON.stringify(markers));
+    markers[eventId] = now;
+    safeWriteFile(DEDUP_PATH, JSON.stringify(markers));
   } catch {
     // Non-fatal — dedup is best-effort
   }
@@ -188,9 +238,9 @@ export function formatOutput(systemMessage) {
 // ── Input parsing ───────────────────────────────────────────────────
 export function parseInput() {
   try {
-    const raw = readFileSync("/dev/stdin", "utf-8").trim();
-    if (!raw) return {};
-    return JSON.parse(raw);
+    const raw = readFileSync("/dev/stdin", "utf-8");
+    if (!raw || raw.length > MAX_STDIN_BYTES) return {};
+    return JSON.parse(raw.trim());
   } catch {
     return {};
   }
