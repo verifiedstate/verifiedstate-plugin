@@ -1,0 +1,11 @@
+{
+  "name": "verifiedstate",
+  "version": "0.1.0",
+  "description": "Verified memory and audit trail for AI coding agents. Cryptographic receipts, session continuity, and decision traces.",
+  "author": {
+    "name": "VerifiedState",
+    "url": "https://verifiedstate.ai"
+  },
+  "repository": "https://github.com/verifiedstate/verifiedstate-plugin",
+  "license": "MIT"
+}

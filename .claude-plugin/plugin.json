@@ -1,0 +1,27 @@
+{
+  "name": "verifiedstate",
+  "version": "0.1.0",
+  "description": "Verified memory and audit trail for AI coding agents. Cryptographic receipts, session continuity, and decision traces across Claude Code, Cursor, and Windsurf.",
+  "author": {
+    "name": "VerifiedState",
+    "url": "https://verifiedstate.ai"
+  },
+  "repository": "https://github.com/verifiedstate/verifiedstate-plugin",
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./agents/claude/.mcp.json",
+  "keywords": [
+    "memory",
+    "audit-trail",
+    "verified-memory",
+    "session-continuity",
+    "decision-trace",
+    "cryptographic-receipts",
+    "ed25519",
+    "merkle-chain",
+    "agent-memory",
+    "mcp",
+    "vsync"
+  ]
+}

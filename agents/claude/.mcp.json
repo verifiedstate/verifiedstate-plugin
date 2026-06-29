@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "verifiedstate": {
+      "type": "http",
+      "url": "https://mcp.verifiedstate.ai/mcp",
+      "headers": {
+        "X-Source-Name": "claude-code-plugin",
+        "X-Source-Version": "0.1.0"
+      }
+    }
+  }
+}
